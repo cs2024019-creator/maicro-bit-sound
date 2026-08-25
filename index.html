@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>周波数判定 & micro:bit連携</title>
+</head>
+<body>
+  <h2>音波検知システム</h2>
+  <button onclick="connectMicrobit()">1. micro:bitと接続</button>
+  <button onclick="startAudio()">2. 解析スタート</button>
+  <p id="status">状態: 未接続</p>
+  <p id="timer">継続時間: 0 秒</p>
+
+  <script>
+    let uardTxCharacteristic;
+    const TARGET_FREQ_MIN = 2500; // 周波数下限(Hz)
+    const TARGET_FREQ_MAX = 3500; // 周波数上限(Hz)
+    const THRESHOLD_PERCENT = 30; // 割合(%)
+    const REQUIRED_MINUTES = 1;   // 継続させる時間(分)
+    let startTime = null;
+
+    async function connectMicrobit() {
+      try {
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ namePrefix: 'BBC micro:bit' }],
+          optionalServices: ['6e400001-b5a3-f393-e0a9-e50e24dcca9e']
+        });
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService('6e400001-b5a3-f393-e0a9-e50e24dcca9e');
+        uardTxCharacteristic = await service.getCharacteristic('6e400003-b5a3-f393-e0a9-e50e24dcca9e');
+        document.getElementById('status').innerText = "状態: 接続成功！";
+      } catch (e) { alert("接続失敗: " + e); }
+    }
+
+    async function startAudio() {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const analyser = audioCtx.createAnalyser();
+      const source = audioCtx.createMediaStreamSource(stream);
+      source.connect(analyser);
+      analyser.fftSize = 2048;
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+
+      function analyze() {
+        analyser.getByteFrequencyData(dataArray);
+        const nyquist = audioCtx.sampleRate / 2;
+        const minIdx = Math.round(TARGET_FREQ_MIN / nyquist * bufferLength);
+        const maxIdx = Math.round(TARGET_FREQ_MAX / nyquist * bufferLength);
+        
+        let targetSum = 0, totalSum = 0;
+        for (let i = 0; i < bufferLength; i++) {
+          totalSum += dataArray[i];
+          if (i >= minIdx && i <= maxIdx) targetSum += dataArray[i];
+        }
+        let percent = totalSum > 0 ? (targetSum / totalSum) * 100 : 0;
+
+        if (percent >= THRESHOLD_PERCENT && totalSum > 1000) {
+          if (startTime === null) startTime = Date.now();
+          let elapsedSec = Math.floor((Date.now() - startTime) / 1000);
+          document.getElementById('timer').innerText = `継続時間: ${elapsedSec} 秒`;
+
+          if ((Date.now() - startTime) >= REQUIRED_MINUTES * 60 * 1000 && uardTxCharacteristic) {
+            uardTxCharacteristic.writeValue(new TextEncoder().encode("1\n"));
+            startTime = null;
+          }
+        } else {
+          startTime = null;
+          document.getElementById('timer').innerText = `継続時間: 0 秒（リセット）`;
+        }
+        requestAnimationFrame(analyze);
+      }
+      analyze();
+    }
+  </script>
+</body>
+</html>
