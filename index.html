@@ -15,7 +15,7 @@
     let uardTxCharacteristic;
     const TARGET_FREQ_MIN = 20; // 周波数下限(Hz)
     const TARGET_FREQ_MAX = 60; // 周波数上限(Hz)
-    const THRESHOLD_PERCENT = 30; // 割合(%)
+    const THRESHOLD_PERCENT = 10; // 割合(%)
     const REQUIRED_MINUTES = 0.1667;   // 継続させる時間(分)
     let startTime = null;
 
@@ -55,13 +55,13 @@
         }
         let percent = totalSum > 0 ? (targetSum / totalSum) * 100 : 0;
 
-        if (percent >= THRESHOLD_PERCENT && totalSum > 1000) {
+        if (percent >= THRESHOLD_PERCENT) {
           if (startTime === null) startTime = Date.now();
           let elapsedSec = Math.floor((Date.now() - startTime) / 1000);
           document.getElementById('timer').innerText = `継続時間: ${elapsedSec} 秒`;
 
           if ((Date.now() - startTime) >= REQUIRED_MINUTES * 60 * 1000 && uardTxCharacteristic) {
-            uardTxCharacteristic.writeValue(new TextEncoder().encode("1\n"));
+            uardTxCharacteristic.writeValue(new TextEncoder().encode("1"));
             startTime = null;
           }
         } else {
