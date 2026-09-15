@@ -2,76 +2,131 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>周波数判定 & micro:bit連携</title>
+  <title>周波数判定 & micro:bit連携 (デバッグ表示版)</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; padding: 20px; background-color: #f4f4f9; }
+    button { font-size: 16px; padding: 12px; margin: 5px; border-radius: 8px; border: none; background: #007bff; color: white; }
+    .box { background: white; padding: 15px; margin-top: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    p { font-size: 18px; margin: 8px 0; }
+    .highlight { font-weight: bold; color: #d9534f; font-size: 22px; }
+  </style>
 </head>
 <body>
-  <h2>音波検知システム</h2>
+
+  <h2>音波検知システム (動作確認モード)</h2>
   <button onclick="connectMicrobit()">1. micro:bitと接続</button>
   <button onclick="startAudio()">2. 解析スタート</button>
-  <p id="status">状態: 未接続</p>
-  <p id="timer">継続時間: 0 秒</p>
 
-  <script>
-    let uardTxCharacteristic;
-    const TARGET_FREQ_MIN = 20; // 周波数下限(Hz)
-    const TARGET_FREQ_MAX = 60; // 周波数上限(Hz)
-    const THRESHOLD_PERCENT = 10; // 割合(%)
-    const REQUIRED_MINUTES = 0.1667;   // 継続させる時間(分)
-    let startTime = null;
+  <div class="box">
+    <p id="status">状態: 未接続</p>
+    <!-- 【確認ポイント1】スマホが音を拾っているかリアルタイム表示 -->
+    <p id="percent">現在の周波数割合: 0 %</p>
+    <p id="timer" class="highlight">継続時間: 0 秒</p>
+    <!-- 【確認ポイント2】スマホが信号を送った回数 -->
+    <p id="sendCount">送信履歴: まだ送信していません</p>
+  </div>
 
-    async function connectMicrobit() {
-      try {
-        const device = await navigator.bluetooth.requestDevice({
-          filters: [{ namePrefix: 'BBC micro:bit' }],
-          optionalServices: ['6e400001-b5a3-f393-e0a9-e50e24dcca9e']
-        });
-        const server = await device.gatt.connect();
-        const service = await server.getPrimaryService('6e400001-b5a3-f393-e0a9-e50e24dcca9e');
-        uardTxCharacteristic = await service.getCharacteristic('6e400003-b5a3-f393-e0a9-e50e24dcca9e');
-        document.getElementById('status').innerText = "状態: 接続成功！";
-      } catch (e) { alert("接続失敗: " + e); }
+<script>
+  let uardTxCharacteristic;
+  const TARGET_FREQ_MIN = 500; // 判定したい周波数下限(Hz)
+  const TARGET_FREQ_MAX = 2000; // 判定したい周波数上限(Hz)
+  const THRESHOLD_PERCENT = 10; // 割合(%)
+  const REQUIRED_MINUTES = 0.1; // テスト用に6秒（0.1分）に設定
+
+  let startTime = null;
+  let sendTotal = 0;
+  let isAlerting = false; // 11秒間の重複送信をブロックするフラグ
+
+  // 1. micro:bitへのBluetooth接続処理
+  async function connectMicrobit() {
+    try {
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ namePrefix: 'BBC micro:bit' }],
+        optionalServices: ['6e400001-b5a3-f393-e0a9-e50e24dcca9e']
+      });
+
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService('6e400001-b5a3-f393-e0a9-e50e24dcca9e');
+      // RX Characteristic (micro:bitへデータ送信)
+      uardTxCharacteristic = await service.getCharacteristic('6e400002-b5a3-f393-e0a9-e50e24dcca9e');
+      
+      document.getElementById('status').innerText = "状態: 接続成功！";
+    } catch (e) {
+      alert("接続失敗: " + e);
     }
+  }
 
-    async function startAudio() {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const analyser = audioCtx.createAnalyser();
-      const source = audioCtx.createMediaStreamSource(stream);
-      source.connect(analyser);
-      analyser.fftSize = 2048;
-      const bufferLength = analyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
+  // 2. マイク音声の取得と解析準備
+  async function startAudio() {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const analyser = audioCtx.createAnalyser();
+    const source = audioCtx.createMediaStreamSource(stream);
+    source.connect(analyser);
 
-      function analyze() {
-        analyser.getByteFrequencyData(dataArray);
-        const nyquist = audioCtx.sampleRate / 2;
-        const minIdx = Math.round(TARGET_FREQ_MIN / nyquist * bufferLength);
-        const maxIdx = Math.round(TARGET_FREQ_MAX / nyquist * bufferLength);
-        
-        let targetSum = 0, totalSum = 0;
-        for (let i = 0; i < bufferLength; i++) {
-          totalSum += dataArray[i];
-          if (i >= minIdx && i <= maxIdx) targetSum += dataArray[i];
+    analyser.fftSize = 2048;
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    // 3. 音波のリアルタイム解析ループ
+    function analyze() {
+      analyser.getByteFrequencyData(dataArray);
+      const nyquist = audioCtx.sampleRate / 2;
+      const minIdx = Math.round(TARGET_FREQ_MIN / nyquist * bufferLength);
+      const maxIdx = Math.round(TARGET_FREQ_MAX / nyquist * bufferLength);
+
+      let targetSum = 0, totalSum = 0;
+
+      for (let i = 0; i < bufferLength; i++) {
+        totalSum += dataArray[i];
+        if (i >= minIdx && i <= maxIdx) {
+          targetSum += dataArray[i];
         }
-        let percent = totalSum > 0 ? (targetSum / totalSum) * 100 : 0;
-
-        if (percent >= THRESHOLD_PERCENT) {
-          if (startTime === null) startTime = Date.now();
-          let elapsedSec = Math.floor((Date.now() - startTime) / 1000);
-          document.getElementById('timer').innerText = `継続時間: ${elapsedSec} 秒`;
-
-          if ((Date.now() - startTime) >= REQUIRED_MINUTES * 60 * 1000 && uardTxCharacteristic) {
-            uardTxCharacteristic.writeValue(new TextEncoder().encode("1"));
-            startTime = null;
-          }
-        } else {
-          startTime = null;
-          document.getElementById('timer').innerText = `継続時間: 0 秒（リセット）`;
-        }
-        requestAnimationFrame(analyze);
       }
-      analyze();
+
+      let percent = totalSum > 0 ? (targetSum / totalSum) * 100 : 0;
+
+      // 【確認1】割合をリアルタイム表示
+      document.getElementById('percent').innerText = `現在の周波数割合: ${percent.toFixed(1)} % (目標: ${THRESHOLD_PERCENT}%以上)`;
+
+      if (percent >= THRESHOLD_PERCENT) {
+        if (startTime === null) startTime = Date.now();
+        let elapsedSec = Math.floor((Date.now() - startTime) / 1000);
+        document.getElementById('timer').innerText = `継続時間: ${elapsedSec} 秒`;
+
+        // 規定時間に達し、かつ11秒のブロック中でなければ送信処理を実行
+        if ((Date.now() - startTime) >= REQUIRED_MINUTES * 60 * 1000 && uardTxCharacteristic && !isAlerting) {
+          
+          isAlerting = true; // 11秒の送信ブロック開始
+          
+          // 末尾に \n を追加して送信
+          uardTxCharacteristic.writeValue(new TextEncoder().encode("1\n"))
+            .then(() => {
+              sendTotal++;
+              document.getElementById('sendCount').innerText = `送信履歴: ${sendTotal} 回送信しました！ (${new Date().toLocaleTimeString()})`;
+              startTime = null;
+
+              // 11秒間（11000ミリ秒）経過後にブロックを解除する処理
+              setTimeout(() => {
+                isAlerting = false;
+              }, 11000);
+            })
+            .catch(err => {
+              console.error(err);
+              isAlerting = false; // エラー時はブロック解除
+            });
+        }
+      } else {
+        // 音波の割合が閾値を下回ったらタイマーをリセット
+        startTime = null;
+        document.getElementById('timer').innerText = `継続時間: 0 秒 (音が検知されていません)`;
+      }
+
+      requestAnimationFrame(analyze);
     }
-  </script>
+
+    analyze();
+  }
+</script>
 </body>
 </html>
