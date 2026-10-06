@@ -100,7 +100,7 @@
           isAlerting = true; // 11秒の送信ブロック開始
           
           // 末尾に \n を追加して送信
-          uardTxCharacteristic.writeValue(new TextEncoder().encode("1"))
+          uardTxCharacteristic.writeValue(new TextEncoder().encode("1/n"))
             .then(() => {
               sendTotal++;
               document.getElementById('sendCount').innerText = `送信履歴: ${sendTotal} 回送信しました！ (${new Date().toLocaleTimeString()})`;
