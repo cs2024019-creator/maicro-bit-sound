@@ -48,7 +48,7 @@
       const server = await device.gatt.connect();
       const service = await server.getPrimaryService('6e400001-b5a3-f393-e0a9-e50e24dcca9e');
       // RX Characteristic (micro:bitへデータ送信)
-      uardTxCharacteristic = await service.getCharacteristic('6e400003-b5a3-f393-e0a9-e50e24dcca9e');
+      uardTxCharacteristic = await service.getCharacteristic('6e400002-b5a3-f393-e0a9-e50e24dcca9e');
       
       document.getElementById('status').innerText = "状態: 接続成功！";
     } catch (e) {
@@ -98,13 +98,13 @@
         if ((Date.now() - startTime) >= REQUIRED_MINUTES * 60 * 1000 && uardTxCharacteristic && !isAlerting) {
           
           isAlerting = true; // 11秒の送信ブロック開始
+          startTime = null;
           
           // 末尾に \n を追加して送信
           uardTxCharacteristic.writeValue(new TextEncoder().encode("1/n"))
             .then(() => {
               sendTotal++;
               document.getElementById('sendCount').innerText = `送信履歴: ${sendTotal} 回送信しました！ (${new Date().toLocaleTimeString()})`;
-              startTime = null;
 
               // 11秒間（11000ミリ秒）経過後にブロックを解除する処理
               setTimeout(() => {
